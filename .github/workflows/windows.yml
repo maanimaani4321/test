@@ -6,72 +6,97 @@ on:
   workflow_dispatch:
 
 jobs:
-  test-webrtc:
+  build-webrtc:
     runs-on: windows-latest
 
     steps:
-      - name: 1. Free Up Disk Space
-        shell: pwsh
-        run: |
-          Write-Host "Freeing disk space for WebRTC..." -ForegroundColor Yellow
-          $targets = @(
-              "$env:ANDROID_HOME",
-              "$env:ANDROID_NDK_HOME",
-              "C:\Program Files\Android",
-              "C:\Program Files\Java",
-              "C:\hostedtoolcache\windows\Java",
-              "C:\ProgramData\DockerDesktop"
-          )
-          foreach ($p in $targets) {
-              if (Test-Path $p) { Remove-Item -Path $p -Recurse -Force -ErrorAction SilentlyContinue }
-          }
-
-      - name: 2. Checkout Repository
+      - name: 1. Checkout Repository
         uses: actions/checkout@v4
-        with:
-          submodules: 'recursive'
 
-      - name: 3. Setup MSVC Developer Environment
+      - name: 2. Setup MSVC Developer Environment (x64)
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
-      - name: 4. Configure CMake (WebRTC ONLY)
-        shell: pwsh
-        run: |
-          $INSTALL_TOOLCHAIN = "${{ runner.workspace }}/install-toolchain" -replace '\\', '/'
-          $INSTALL_TT = "${{ runner.workspace }}/install-teamtalk" -replace '\\', '/'
-
-          # تمام ابزارهای سنگین خاموش شده‌اند تا فقط WebRTC تست شود
-          cmake -S . -B output -A x64 `
-            -DFEATURE_WEBRTC=ON `
-            -DTOOLCHAIN_BUILD_EXTERNALPROJECTS=ON `
-            -DTOOLCHAIN_OPENSSL=OFF `
-            -DTOOLCHAIN_ACE=OFF `
-            -DTOOLCHAIN_FFMPEG=OFF `
-            -DTOOLCHAIN_LIBVPX=OFF `
-            -DTOOLCHAIN_OPUS=OFF `
-            -DTOOLCHAIN_SPEEX=OFF `
-            -DTOOLCHAIN_SPEEXDSP=OFF `
-            -DTOOLCHAIN_PORTAUDIO=OFF `
-            -DTOOLCHAIN_MINIUPNPC=OFF `
-            -DTOOLCHAIN_TINYXML2=OFF `
-            -DTOOLCHAIN_OGG=OFF `
-            -DTOOLCHAIN_ZLIB=OFF `
-            -DTOOLCHAIN_CATCH2=OFF `
-            "-DTOOLCHAIN_INSTALL_PREFIX=$INSTALL_TOOLCHAIN" `
-            "-DCMAKE_INSTALL_PREFIX=$INSTALL_TT"
-
-      - name: 5. Build WebRTC Target Directly
+      - name: 3. Setup depot_tools
         shell: cmd
         run: |
-          cmake --build output --config Release --target webrtc-src -- /v:minimal /fl "/flp:logfile=msbuild-webrtc.log;verbosity=normal"
+          mkdir C:\webrtc
+          cd /d C:\webrtc
+          git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+          echo C:\webrtc\depot_tools>> %GITHUB_PATH%
 
-      - name: 6. Check Error Log if Failed
-        if: failure()
+      - name: 4. Fetch & Sync WebRTC (branch-heads/7778)
+        shell: cmd
+        run: |
+          set DEPOT_TOOLS_WIN_TOOLCHAIN=0
+          set PATH=C:\webrtc\depot_tools;%PATH%
+          cd /d C:\webrtc
+
+          echo === [1/5] Running fetch webrtc ===
+          call fetch --nohooks webrtc
+          if errorlevel 1 exit /b 1
+
+          cd C:\webrtc\src
+
+          echo === [2/5] Configuring branch-heads refspec ===
+          call git config --add remote.origin.fetch "+refs/branch-heads/*:refs/remotes/origin/*"
+          if errorlevel 1 exit /b 1
+
+          echo === [3/5] Fetching origin ===
+          call git fetch origin
+          if errorlevel 1 exit /b 1
+
+          echo === [4/5] Checking out branch-heads/7778 ===
+          call git checkout branch-heads/7778
+          if errorlevel 1 exit /b 1
+
+          cd /d C:\webrtc
+          echo === [5/5] Running gclient sync ===
+          call gclient sync --with_branch_heads -D -j4
+          if errorlevel 1 exit /b 1
+
+      - name: 5. Apply TeamTalk Patch
+        shell: cmd
+        run: |
+          cd /d C:\webrtc\src
+          call git apply "%GITHUB_WORKSPACE%\Library\TeamTalkLib\build\webrtc\0001-Add-teamtalk-static-lib.patch"
+          if errorlevel 1 (
+              echo Patch failed from relative path, trying fallback...
+              call git apply "%GITHUB_WORKSPACE%\webrtc\0001-Add-teamtalk-static-lib.patch"
+          )
+
+      - name: 6. Compile WebRTC (teamtalk.lib) with GN & Ninja
+        shell: cmd
+        run: |
+          set DEPOT_TOOLS_WIN_TOOLCHAIN=0
+          set PATH=C:\webrtc\depot_tools;%PATH%
+          cd /d C:\webrtc\src
+
+          mkdir out\Release
+          
+          :: تولید فایل کانفیگ args.gn
+          (
+            echo is_debug=false
+            echo target_cpu="x64"
+            echo rtc_disable_logging=true
+            echo rtc_enable_protobuf=false
+            echo rtc_include_tests=false
+            echo use_custom_libcxx=false
+            echo use_lld=false
+          ) > out\Release\args.gn
+
+          echo === Generating Ninja project ===
+          call gn gen out\Release
+          if errorlevel 1 exit /b 1
+
+          echo === Building teamtalk.lib ===
+          call ninja -C out\Release teamtalk
+          if errorlevel 1 exit /b 1
+
+      - name: 7. Verify Output Library
         shell: pwsh
         run: |
-          Write-Host "================ BUILD FAILED ================" -ForegroundColor Red
-          if (Test-Path "output/msbuild-webrtc.log") {
-              Select-String -Path "output/msbuild-webrtc.log" -Pattern "error", "fatal error", "FAILED" | Select-Object -Last 30 | ForEach-Object { Write-Host $_.Line }
-          }
+          Write-Host "Searching for compiled teamtalk.lib..." -ForegroundColor Green
+          $libs = Get-ChildItem -Path "C:\webrtc\src\out\Release" -Filter "*.lib" -Recurse
+          $libs | Format-Table FullName, Length -AutoSize
