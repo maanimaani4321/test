@@ -1,4 +1,4 @@
-name: Windows x64 DLL & Toolchain Builder
+name: Test Build FFmpeg Only (Windows x64)
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-ffmpeg:
     runs-on: windows-latest
     permissions:
       contents: write
@@ -28,7 +28,7 @@ jobs:
           msystem: MSYS
           path-type: inherit
           update: true
-          install: base-devel
+          install: base-devel pkg-config
           release: false
 
       - name: Install NASM
@@ -39,56 +39,112 @@ jobs:
           7z x nasm.zip
           echo %CD%\nasm-3.01>> %GITHUB_PATH%
 
-      - name: Configure CMake
-        working-directory: ${{ github.workspace }}
-        shell: cmd
-        run: |
-          cmake -S . -B output -A x64 ^
-            -DFEATURE_WEBRTC=OFF ^
-            -DTOOLCHAIN_BUILD_EXTERNALPROJECTS=ON ^
-            -DTOOLCHAIN_INSTALL_PREFIX="${{ runner.workspace }}/install-toolchain" ^
-            -DCMAKE_INSTALL_PREFIX="${{ runner.workspace }}/install-teamtalk"
-
-      - name: Build TeamTalk5 Core and DLL
-        working-directory: ${{ github.workspace }}
-        shell: cmd
-        run: |
-          cmake --build output --parallel 4 --config Release --target TeamTalk5DLL
-
-      - name: Collect and Package Artifacts
+      - name: Clone and Setup FFmpeg
         shell: pwsh
         run: |
-          # 1. ساخت مسیر خروجی نهایی
-          New-Item -ItemType Directory -Force -Path final_package/bin
-          New-Item -ItemType Directory -Force -Path final_package/include
+          New-Item -ItemType Directory -Force -Path ffmpeg_build
+          cd ffmpeg_build
+          git clone --depth 1 --branch n8.1.1 https://github.com/FFmpeg/FFmpeg.git src
 
-          Copy-Item "${{ github.workspace }}/Library/TeamTalk_DLL/TeamTalk5.dll" -Destination final_package/bin/ -Force
-          Copy-Item "${{ github.workspace }}/Library/TeamTalk_DLL/TeamTalk5.lib" -Destination final_package/bin/ -Force
-          Copy-Item "${{ github.workspace }}/Library/TeamTalk_DLL/TeamTalk.h" -Destination final_package/include/ -Force
+      - name: Prepare Fake pkg-config Script
+        shell: pwsh
+        run: |
+          # تبدیل مسیر ویندوزی به مسیر استاندارد با اسلش رو به جلو برای MSYS2
+          $WS_DIR = ($env:GITHUB_WORKSPACE -replace '\\', '/')
+          $INC_DIR = "$WS_DIR/Library/TeamTalkLib/third_party/include"
+          $LIB_DIR = "$WS_DIR/Library/TeamTalkLib/third_party/lib/x64"
 
-          # 2. فشرده‌سازی باینری‌ها
-          Compress-Archive -Path final_package/* -DestinationPath TeamTalk5-Windows-x64.zip -Force
+          $PKG_DIR = New-Item -ItemType Directory -Force -Path "${{ github.workspace }}/pkgconfig"
 
-          # 3. فشرده‌سازی کل پوشه وابستگی‌های بیلد شده
-          if (Test-Path "${{ runner.workspace }}/install-toolchain") {
-              Compress-Archive -Path "${{ runner.workspace }}/install-toolchain/*" -DestinationPath toolchain-windows-x64-install.zip -Force
+          $pkgScript = @"
+          #!/bin/sh
+          is_custom=0
+          for arg in "`$@"; do
+              case "`$arg" in
+                  *rubberband*|*mysofa*)
+                      is_custom=1
+                      ;;
+              esac
+          done
+
+          if [ "`$is_custom" -eq 1 ]; then
+              for arg in "`$@"; do
+                  case "`$arg" in
+                      --exists)
+                          exit 0
+                          ;;
+                      --modversion)
+                          echo "2.0.2"
+                          exit 0
+                          ;;
+                      --libs)
+                          echo "-L$LIB_DIR -lrubberband -lmysofa -lfftw3f"
+                          exit 0
+                          ;;
+                      --cflags)
+                          echo "-I$INC_DIR"
+                          exit 0
+                          ;;
+                  esac
+              done
+              exit 0
+          fi
+
+          exec pkg-config "`$@"
+          "@
+
+          $pkgScript | Set-Content -Path "$PKG_DIR/pkg-config" -NoNewline
+          
+          # اضافه کردن مجوز اجرا در محیط MSYS2
+          bash -c "chmod +x /c/$((($PKG_DIR.FullName -replace 'C:\\','c/') -replace '\\','/'))/pkg-config"
+
+      - name: Configure and Build FFmpeg
+        shell: msys2 {0}
+        run: |
+          cd ffmpeg_build/src
+          
+          WS_UNIX="/c/$((("${{ github.workspace }}" -replace "C:\\\\","") -replace "\\\\","/"))"
+          INC_DIR="$WS_UNIX/Library/TeamTalkLib/third_party/include"
+          LIB_DIR="$WS_UNIX/Library/TeamTalkLib/third_party/lib/x64"
+          PKG_PATH="$WS_UNIX/pkgconfig/pkg-config"
+          INSTALL_DIR="$WS_UNIX/ffmpeg_install"
+
+          echo "Configuring FFmpeg with MSVC..."
+          ./configure \
+            --prefix="$INSTALL_DIR" \
+            --toolchain=msvc \
+            --arch=x86_64 \
+            --target-os=win64 \
+            --disable-doc \
+            --disable-programs \
+            --disable-autodetect \
+            --disable-debug \
+            --enable-gpl \
+            --enable-nonfree \
+            --enable-librubberband \
+            --enable-libmysofa \
+            --pkg-config="$PKG_PATH" \
+            --extra-cflags="-I$INC_DIR" \
+            --extra-ldflags="-LIBPATH:$LIB_DIR rubberband.lib mysofa.lib fftw3f.lib"
+
+          echo "Compiling FFmpeg..."
+          make -j4
+          make install
+
+      - name: Print config.log on Failure
+        if: failure()
+        shell: pwsh
+        run: |
+          if (Test-Path "ffmpeg_build/src/ffbuild/config.log") {
+              Write-Host "==================== FFmpeg config.log ===================="
+              Get-Content "ffmpeg_build/src/ffbuild/config.log" -Tail 200
+          } else {
+              Write-Host "config.log file not found."
           }
 
-      - name: Upload Artifacts to GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Upload FFmpeg Artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: latest-win64
-          name: "TeamTalk5 Windows x64 DLL & Prebuilt Dependencies"
-          body: |
-            Automated build for Windows x64 (MSVC /MT):
-            - `TeamTalk5-Windows-x64.zip`: Contains `TeamTalk5.dll`, `TeamTalk5.lib`, and `TeamTalk.h`.
-            - `toolchain-windows-x64-install.zip`: Full compiled dependency tree (OpenSSL, FFmpeg, ACE, Speex, Opus, etc.).
-            
-            Last updated: ${{ github.event.head_commit.timestamp || 'Manual Run' }}
-          draft: false
-          prerelease: true
-          files: |
-            TeamTalk5-Windows-x64.zip
-            toolchain-windows-x64-install.zip
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: ffmpeg-windows-x64-binaries
+          path: ffmpeg_install/
