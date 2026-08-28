@@ -26,7 +26,7 @@ if (MSVC)
     -D_CRT_SECURE_NO_DEPRECATE
     -D_CRT_NONSTDC_NO_DEPRECATE
     -D_WINSOCK_DEPRECATED_NO_WARNINGS)
-  set (PLATFORMTOOLSET "/property:PlatformToolset=v145")
+  set (PLATFORMTOOLSET "/property:PlatformToolset=v143")
 else()
   set (COMPILE_FLAGS -Wno-deprecated-declarations)
 endif()

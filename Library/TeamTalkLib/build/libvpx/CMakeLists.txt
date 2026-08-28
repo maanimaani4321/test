@@ -20,7 +20,7 @@ if (MSVC)
 
   if (TOOLCHAIN_BUILD_EXTERNALPROJECTS)
     if (${CMAKE_SIZEOF_VOID_P} EQUAL 8)
-      set (LIBVPX_WIN_TARGET x86_64-win64-vs18)
+      set (LIBVPX_WIN_TARGET x86_64-win64-vs17)
       configure_file(${CMAKE_CURRENT_LIST_DIR}/build-libvpx-win.bat_sample ${CMAKE_CURRENT_BINARY_DIR}/build-libvpx-win64.bat @ONLY)
 
       ExternalProject_Add(libvpx-src
@@ -41,7 +41,7 @@ if (MSVC)
         DEPENDS           ${NASM_TARGET}
         )
     else()
-      set (LIBVPX_WIN_TARGET x86-win32-vs18)
+      set (LIBVPX_WIN_TARGET x86-win32-vs17)
       configure_file(${CMAKE_CURRENT_LIST_DIR}/build-libvpx-win.bat_sample ${CMAKE_CURRENT_BINARY_DIR}/build-libvpx-win32.bat @ONLY)
 
       ExternalProject_Add(libvpx-src
@@ -111,7 +111,6 @@ elseif (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
       )
     ExternalProject_Get_Property(libvpx-intel-src INSTALL_DIR)
 
-    # Use 'lipo' to create universal binary
     file(MAKE_DIRECTORY ${TOOLCHAIN_INSTALL_PREFIX_LIBVPX}/lib)
     file(MAKE_DIRECTORY ${TOOLCHAIN_INSTALL_PREFIX_LIBVPX}/include)
     add_custom_command (OUTPUT ${TOOLCHAIN_INSTALL_PREFIX_LIBVPX}/lib/libvpx.a
@@ -125,50 +124,6 @@ elseif (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
     add_custom_target (libvpx-src DEPENDS ${TOOLCHAIN_INSTALL_PREFIX_LIBVPX}/lib/libvpx.a
       ${TOOLCHAIN_INSTALL_PREFIX_LIBVPX}/include/vpx/vpx_codec.h)
     set (INSTALL_DIR ${TOOLCHAIN_INSTALL_PREFIX_LIBVPX})
-  else()
-    set (INSTALL_DIR ${TOOLCHAIN_INSTALL_PREFIX_LIBVPX})
-  endif(TOOLCHAIN_BUILD_EXTERNALPROJECTS)
-
-  add_library(libvpx STATIC IMPORTED GLOBAL)
-  if (TOOLCHAIN_BUILD_EXTERNALPROJECTS)
-    add_dependencies(libvpx libvpx-src)
-  endif()
-  target_include_directories (libvpx INTERFACE ${INSTALL_DIR}/include)
-  set_target_properties(libvpx PROPERTIES
-    IMPORTED_LOCATION ${INSTALL_DIR}/lib/libvpx.a)
-
-elseif (${CMAKE_SYSTEM_NAME} MATCHES "iOS")
-
-  if ("armv7" STREQUAL "${CMAKE_OSX_ARCHITECTURES}")
-    set (LIBVPX_CPPFLAGS -miphoneos-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET})
-    set (LIBVPX_TARGET armv7-darwin-gcc)
-  elseif ("arm64" STREQUAL "${CMAKE_OSX_ARCHITECTURES}")
-    set (LIBVPX_CPPFLAGS -miphoneos-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET})
-    set (LIBVPX_TARGET arm64-darwin-gcc)
-  elseif ("i386" STREQUAL "${CMAKE_OSX_ARCHITECTURES}")
-    set (LIBVPX_CPPFLAGS -mios-simulator-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET})
-    set (LIBVPX_TARGET x86-iphonesimulator-gcc)
-  elseif ("x86_64" STREQUAL "${CMAKE_OSX_ARCHITECTURES}")
-    set (LIBVPX_CPPFLAGS -mios-simulator-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET})
-    set (LIBVPX_TARGET x86_64-iphonesimulator-gcc)
-  endif()
-
-  if (TOOLCHAIN_BUILD_EXTERNALPROJECTS)
-    ExternalProject_Add(libvpx-src
-      GIT_REPOSITORY    https://github.com/webmproject/libvpx.git
-      GIT_TAG           e9efe034e
-      UPDATE_COMMAND    ""
-      PREFIX            ${TOOLCHAIN_BUILD_PREFIX}/libvpx
-      INSTALL_DIR       ${TOOLCHAIN_INSTALL_PREFIX}/libvpx
-      CONFIGURE_COMMAND <SOURCE_DIR>/configure --extra-cflags=${LIBVPX_CPPFLAGS}
-      --prefix=<INSTALL_DIR> --target=${LIBVPX_TARGET}
-      --disable-examples --disable-docs --disable-unit-tests
-      BUILD_COMMAND     make ${TOOLCHAIN_BUILD_MAKEJOBS}
-      INSTALL_COMMAND   make ${TOOLCHAIN_BUILD_MAKEJOBS} install
-      BUILD_BYPRODUCTS  <INSTALL_DIR>/lib/libvpx.a
-      )
-    ExternalProject_Get_Property(libvpx-src INSTALL_DIR)
-    file(MAKE_DIRECTORY ${INSTALL_DIR}/include)
   else()
     set (INSTALL_DIR ${TOOLCHAIN_INSTALL_PREFIX_LIBVPX})
   endif(TOOLCHAIN_BUILD_EXTERNALPROJECTS)
@@ -218,73 +173,5 @@ elseif (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
   target_include_directories (libvpx INTERFACE ${INSTALL_DIR}/include)
   set_target_properties(libvpx PROPERTIES
     IMPORTED_LOCATION ${INSTALL_DIR}/lib/libvpx.a)
-  if (${CMAKE_SYSTEM_NAME} MATCHES "Linux" AND ${CMAKE_SIZEOF_VOID_P} EQUAL 8)
-    target_link_options(libvpx INTERFACE "-Wl,-Bsymbolic")
-  endif()
-
-elseif (${CMAKE_SYSTEM_NAME} MATCHES "Android")
-
-  set (LIBVPX_EXPORT export PATH=${CMAKE_ANDROID_NDK}/toolchains/llvm/prebuilt/linux-x86_64/bin:$ENV{PATH})
-
-  if ("armeabi-v7a" STREQUAL "${ANDROID_ABI}")
-    list (APPEND LIBVPX_EXPORT && export CC=armv7a-linux-androideabi${ANDROID_PLATFORM_LEVEL}-clang)
-    list (APPEND LIBVPX_EXPORT && export LD=armv7a-linux-androideabi${ANDROID_PLATFORM_LEVEL}-clang)
-    list (APPEND LIBVPX_EXPORT && export CXX=armv7a-linux-androideabi${ANDROID_PLATFORM_LEVEL}-clang++)
-    list (APPEND LIBVPX_EXPORT && export AS=armv7a-linux-androideabi${ANDROID_PLATFORM_LEVEL}-clang)
-    list (APPEND LIBVPX_EXPORT && export STRIP=llvm-strip)
-    set (LIBVPX_CFG --target=armv7-android-gcc)
-  elseif ("arm64-v8a" STREQUAL "${ANDROID_ABI}")
-    list (APPEND LIBVPX_EXPORT && export CC=aarch64-linux-android${ANDROID_PLATFORM_LEVEL}-clang)
-    list (APPEND LIBVPX_EXPORT && export LD=aarch64-linux-android${ANDROID_PLATFORM_LEVEL}-clang)
-    list (APPEND LIBVPX_EXPORT && export CXX=aarch64-linux-android${ANDROID_PLATFORM_LEVEL}-clang++)
-    list (APPEND LIBVPX_EXPORT && export AS=aarch64-linux-android${ANDROID_PLATFORM_LEVEL}-clang)
-    list (APPEND LIBVPX_EXPORT && export STRIP=llvm-strip)
-    set (LIBVPX_CFG --target=arm64-android-gcc)
-  elseif ("x86" STREQUAL "${ANDROID_ABI}")
-    list (APPEND LIBVPX_EXPORT && export CC=i686-linux-android${ANDROID_PLATFORM_LEVEL}-clang)
-    list (APPEND LIBVPX_EXPORT && export LD=i686-linux-android${ANDROID_PLATFORM_LEVEL}-clang)
-    list (APPEND LIBVPX_EXPORT && export CXX=i686-linux-android${ANDROID_PLATFORM_LEVEL}-clang++)
-    list (APPEND LIBVPX_EXPORT && export STRIP=llvm-strip)
-    set (LIBVPX_CFG --target=x86-android-gcc --as=nasm)
-  elseif ("x86_64" STREQUAL "${ANDROID_ABI}")
-    list (APPEND LIBVPX_EXPORT && export CC=x86_64-linux-android${ANDROID_PLATFORM_LEVEL}-clang)
-    list (APPEND LIBVPX_EXPORT && export LD=x86_64-linux-android${ANDROID_PLATFORM_LEVEL}-clang)
-    list (APPEND LIBVPX_EXPORT && export CXX=x86_64-linux-android${ANDROID_PLATFORM_LEVEL}-clang++)
-    list (APPEND LIBVPX_EXPORT && export STRIP=llvm-strip)
-    set (LIBVPX_CFG --target=x86_64-android-gcc)
-  else()
-    message(FATAL_ERROR "Unknown Android architecture")
-  endif()
-
-  if (TOOLCHAIN_BUILD_EXTERNALPROJECTS)
-    ExternalProject_Add(libvpx-src
-      GIT_REPOSITORY    https://github.com/webmproject/libvpx.git
-      GIT_TAG           e9efe034e
-      UPDATE_COMMAND    ""
-      PREFIX            ${TOOLCHAIN_BUILD_PREFIX}/libvpx
-      INSTALL_DIR       ${TOOLCHAIN_INSTALL_PREFIX}/libvpx
-      CONFIGURE_COMMAND ${LIBVPX_EXPORT} && <SOURCE_DIR>/configure
-      --prefix=<INSTALL_DIR> ${LIBVPX_CFG}
-      --disable-examples --disable-docs --disable-unit-tests --enable-pic
-      BUILD_COMMAND     ${LIBVPX_EXPORT} && make ${TOOLCHAIN_BUILD_MAKEJOBS}
-      INSTALL_COMMAND   ${LIBVPX_EXPORT} && make ${TOOLCHAIN_BUILD_MAKEJOBS} install
-      BUILD_BYPRODUCTS  <INSTALL_DIR>/lib/libvpx.a
-      )
-    ExternalProject_Get_Property(libvpx-src INSTALL_DIR)
-    file(MAKE_DIRECTORY ${INSTALL_DIR}/include)
-  else()
-    set (INSTALL_DIR ${TOOLCHAIN_INSTALL_PREFIX_LIBVPX})
-  endif(TOOLCHAIN_BUILD_EXTERNALPROJECTS)
-
-  add_library(libvpx STATIC IMPORTED GLOBAL)
-  if (TOOLCHAIN_BUILD_EXTERNALPROJECTS)
-    add_dependencies(libvpx libvpx-src)
-  endif()
-  target_include_directories (libvpx INTERFACE ${INSTALL_DIR}/include)
-  set_target_properties(libvpx PROPERTIES
-    IMPORTED_LOCATION ${INSTALL_DIR}/lib/libvpx.a)
-  if (${CMAKE_SYSTEM_NAME} MATCHES "Linux" AND ${CMAKE_SIZEOF_VOID_P} EQUAL 8)
-    target_link_options(libvpx INTERFACE "-Wl,-Bsymbolic")
-  endif()
 
 endif()

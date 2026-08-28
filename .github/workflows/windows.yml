@@ -41,23 +41,24 @@ jobs:
 
       - name: Configure CMake
         working-directory: ${{ github.workspace }}
-        run: >-
-          cmake -S . -B output -A x64
-          -DFEATURE_WEBRTC=OFF
-          -DTOOLCHAIN_BUILD_EXTERNALPROJECTS=ON
-          -DTOOLCHAIN_INSTALL_PREFIX="${{ runner.workspace }}/install-toolchain"
-          -DCMAKE_INSTALL_PREFIX="${{ runner.workspace }}/install-teamtalk"
+        shell: cmd
+        run: |
+          cmake -S . -B output -A x64 ^
+            -DFEATURE_WEBRTC=OFF ^
+            -DTOOLCHAIN_BUILD_EXTERNALPROJECTS=ON ^
+            -DTOOLCHAIN_INSTALL_PREFIX="${{ runner.workspace }}/install-toolchain" ^
+            -DCMAKE_INSTALL_PREFIX="${{ runner.workspace }}/install-teamtalk"
 
       - name: Build TeamTalk5 Core and DLL
         working-directory: ${{ github.workspace }}
         shell: cmd
         run: |
-          cmake --build output --parallel --config Release --target TeamTalk5DLL
+          cmake --build output --parallel 4 --config Release --target TeamTalk5DLL
 
       - name: Collect and Package Artifacts
         shell: pwsh
         run: |
-          # 1. آماده‌سازی باینری‌ها و هدرها
+          # 1. ساخت مسیر خروجی نهایی
           New-Item -ItemType Directory -Force -Path final_package/bin
           New-Item -ItemType Directory -Force -Path final_package/include
 
@@ -65,10 +66,10 @@ jobs:
           Copy-Item "${{ github.workspace }}/Library/TeamTalk_DLL/TeamTalk5.lib" -Destination final_package/bin/ -Force
           Copy-Item "${{ github.workspace }}/Library/TeamTalk_DLL/TeamTalk.h" -Destination final_package/include/ -Force
 
-          # 2. فشرده‌سازی خروجی نهایی DLL و LIB
+          # 2. فشرده‌سازی باینری‌ها
           Compress-Archive -Path final_package/* -DestinationPath TeamTalk5-Windows-x64.zip -Force
 
-          # 3. فشرده‌سازی کامل پوشه وابستگی‌ها (Toolchain Install)
+          # 3. فشرده‌سازی کل پوشه وابستگی‌های بیلد شده
           if (Test-Path "${{ runner.workspace }}/install-toolchain") {
               Compress-Archive -Path "${{ runner.workspace }}/install-toolchain/*" -DestinationPath toolchain-windows-x64-install.zip -Force
           }
