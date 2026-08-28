@@ -350,22 +350,23 @@ elseif (${CMAKE_SYSTEM_NAME} MATCHES "iOS")
 
 elseif (MSVC)
 
-  set(THIRDPARTY_INC_DIR "${TEAMTALKLIB_ROOT}/third_party/include")
+  file(TO_CMAKE_PATH "${TEAMTALKLIB_ROOT}/third_party" THIRDPARTY_ROOT)
+  set(THIRDPARTY_INC_DIR "${THIRDPARTY_ROOT}/include")
   if (${CMAKE_SIZEOF_VOID_P} EQUAL 8)
     set(FFMPEG_ARCH x86_64)
     set(FFMPEG_TARGET_OS win64)
-    set(THIRDPARTY_LIB_DIR "${TEAMTALKLIB_ROOT}/third_party/lib/x64")
+    set(THIRDPARTY_LIB_DIR "${THIRDPARTY_ROOT}/lib/x64")
   else()
     set(FFMPEG_ARCH x86)
     set(FFMPEG_TARGET_OS win32)
-    set(THIRDPARTY_LIB_DIR "${TEAMTALKLIB_ROOT}/third_party/lib/x86")
+    set(THIRDPARTY_LIB_DIR "${THIRDPARTY_ROOT}/lib/x86")
   endif()
 
   set(PKG_CONFIG_TEMP_DIR "${CMAKE_CURRENT_BINARY_DIR}/pkgconfig")
   file(MAKE_DIRECTORY "${PKG_CONFIG_TEMP_DIR}")
 
   file(WRITE "${PKG_CONFIG_TEMP_DIR}/rubberband.pc"
-"prefix=${TEAMTALKLIB_ROOT}/third_party
+"prefix=${THIRDPARTY_ROOT}
 includedir=\${prefix}/include
 libdir=\${prefix}/lib/x64
 
@@ -378,7 +379,7 @@ Libs: -LIBPATH:\${libdir} rubberband.lib fftw3f.lib
   )
 
   file(WRITE "${PKG_CONFIG_TEMP_DIR}/libmysofa.pc"
-"prefix=${TEAMTALKLIB_ROOT}/third_party
+"prefix=${THIRDPARTY_ROOT}
 includedir=\${prefix}/include
 libdir=\${prefix}/lib/x64
 
@@ -530,6 +531,7 @@ elseif (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
   endif()
   target_include_directories (ffmpeg-avdevice INTERFACE ${INSTALL_DIR}/include)
   set_target_properties(ffmpeg-avdevice PROPERTIES
+    INTERFACE_COMPILE_OPTIONS -D__STDC_CONSTANT_MACROS
     IMPORTED_LOCATION ${INSTALL_DIR}/lib/libavdevice.a)
   target_compile_options(ffmpeg-avdevice INTERFACE -D__STDC_CONSTANT_MACROS)
   target_link_libraries(ffmpeg-avdevice INTERFACE "${FFMPEG_LINK}")
