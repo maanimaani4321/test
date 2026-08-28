@@ -52,9 +52,9 @@ jobs:
             "-DCMAKE_INSTALL_PREFIX=$INSTALL_TT"
 
       - name: Build TeamTalk5 Core and DLL
-        shell: pwsh
+        shell: cmd
         run: |
-          cmake --build output --config Release --target TeamTalk5DLL -- /v:minimal /fl /flp:logfile=msbuild.log;verbosity=normal
+          cmake --build output --config Release --target TeamTalk5DLL -- /v:minimal /fl "/flp:logfile=msbuild.log;verbosity=normal"
 
       - name: Extract and Print Exact Errors on Failure
         if: failure()
