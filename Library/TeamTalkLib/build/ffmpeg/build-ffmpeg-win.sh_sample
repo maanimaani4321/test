@@ -1,0 +1,55 @@
+#!/bin/bash
+set -e
+
+# تبدیل مسیرها به فرمت یونیکس برای MSYS2
+MSYS_PKG_DIR="$(cygpath -u '@PKG_CONFIG_TEMP_DIR@')"
+MSYS_INSTALL_DIR="$(cygpath -u '@FFMPEG_INSTALL_DIR@')"
+
+export PKG_CONFIG_PATH="${MSYS_PKG_DIR}:${PKG_CONFIG_PATH}"
+
+echo "===================================================="
+echo "          FFMPEG PRE-CONFIG VALIDATION CHECK        "
+echo "===================================================="
+echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
+
+echo -n "Checking rubberband version: "
+pkg-config --modversion rubberband || echo "NOT FOUND"
+echo "Rubberband Cflags: $(pkg-config --cflags rubberband 2>/dev/null || echo 'NONE')"
+echo "Rubberband Libs: $(pkg-config --libs rubberband 2>/dev/null || echo 'NONE')"
+
+echo -n "Checking libmysofa version: "
+pkg-config --modversion libmysofa || echo "NOT FOUND"
+echo "Libmysofa Cflags: $(pkg-config --cflags libmysofa 2>/dev/null || echo 'NONE')"
+echo "Libmysofa Libs: $(pkg-config --libs libmysofa 2>/dev/null || echo 'NONE')"
+echo "===================================================="
+
+echo "Starting FFmpeg configure..."
+if ! ./configure \
+    --prefix="${MSYS_INSTALL_DIR}" \
+    --toolchain=msvc \
+    --arch=@FFMPEG_ARCH@ \
+    --target-os=@FFMPEG_TARGET_OS@ \
+    --disable-doc \
+    --disable-programs \
+    --disable-autodetect \
+    --disable-debug \
+    --enable-gpl \
+    --enable-nonfree \
+    --enable-librubberband \
+    --enable-libmysofa \
+    --extra-cflags="-I@THIRDPARTY_INC_DIR@" \
+    --extra-ldflags="-LIBPATH:@THIRDPARTY_LIB_DIR@ rubberband.lib mysofa.lib fftw3f.lib"; then
+    
+    echo "===================================================="
+    echo "  ERROR: FFmpeg configure failed! Last 100 log lines: "
+    echo "===================================================="
+    if [ -f ffbuild/config.log ]; then
+        tail -n 100 ffbuild/config.log
+    fi
+    exit 1
+fi
+
+echo "Building FFmpeg..."
+make @TOOLCHAIN_BUILD_MAKEJOBS@
+make install
+echo "FFmpeg build and installation completed successfully."

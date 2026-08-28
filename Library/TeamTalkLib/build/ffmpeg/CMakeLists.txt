@@ -393,6 +393,9 @@ Libs: -LIBPATH:\${libdir} mysofa.lib
 
   if (TOOLCHAIN_BUILD_EXTERNALPROJECTS)
     set(FFMPEG_INSTALL_DIR ${TOOLCHAIN_INSTALL_PREFIX_FFMPEG})
+    file(TO_CMAKE_PATH "${CMAKE_CURRENT_BINARY_DIR}" CMAKE_CURRENT_BINARY_DIR_UNIX)
+
+    configure_file(${CMAKE_CURRENT_LIST_DIR}/build-ffmpeg-win.sh_sample ${CMAKE_CURRENT_BINARY_DIR}/build-ffmpeg.sh @ONLY)
     configure_file(${CMAKE_CURRENT_LIST_DIR}/build-ffmpeg-win.bat_sample ${CMAKE_CURRENT_BINARY_DIR}/build-ffmpeg-win.bat @ONLY)
 
     ExternalProject_Add(ffmpeg-src
