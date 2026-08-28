@@ -17,45 +17,6 @@ jobs:
         with:
           submodules: 'recursive'
 
-      - name: Verify Third Party Files Existence
-        shell: pwsh
-        run: |
-          Write-Host "====================================================" -ForegroundColor Cyan
-          Write-Host "         CHECKING THIRD_PARTY DIRECTORY             " -ForegroundColor Cyan
-          Write-Host "====================================================" -ForegroundColor Cyan
-          
-          $THIRDPARTY_PATH = "Library/TeamTalkLib/third_party"
-          if (-not (Test-Path $THIRDPARTY_PATH)) {
-              Write-Host "ERROR: Directory $THIRDPARTY_PATH does not exist in repository!" -ForegroundColor Red
-              exit 1
-          }
-
-          Get-ChildItem -Path $THIRDPARTY_PATH -Recurse | Select-Object FullName, Length | Format-Table -AutoSize
-
-          $REQUIRED_FILES = @(
-              "$THIRDPARTY_PATH/lib/x64/rubberband.lib",
-              "$THIRDPARTY_PATH/lib/x64/mysofa.lib",
-              "$THIRDPARTY_PATH/lib/x64/fftw3f.lib",
-              "$THIRDPARTY_PATH/include/rubberband/rubberband-c.h",
-              "$THIRDPARTY_PATH/include/mysofa.h",
-              "$THIRDPARTY_PATH/include/fftw3.h"
-          )
-
-          $MISSING = 0
-          foreach ($file in $REQUIRED_FILES) {
-              if (-not (Test-Path $file)) {
-                  Write-Host "MISSING FILE: $file (Check if git ignored it!)" -ForegroundColor Red
-                  $MISSING++
-              } else {
-                  Write-Host "FOUND: $file" -ForegroundColor Green
-              }
-          }
-
-          if ($MISSING -gt 0) {
-              Write-Host "`nERROR: Some third_party files are missing from git! Use 'git add -f' to force add them." -ForegroundColor Red
-              exit 1
-          }
-
       - name: Setup MSVC Developer Environment (x64)
         uses: ilammy/msvc-dev-cmd@v1
         with:
@@ -90,39 +51,37 @@ jobs:
             "-DTOOLCHAIN_INSTALL_PREFIX=$INSTALL_TOOLCHAIN" `
             "-DCMAKE_INSTALL_PREFIX=$INSTALL_TT"
 
-      # =====================================================================
-      # گام کلیدی: اول فقط FFmpeg را تست و بیلد می‌کنیم (زیر ۲ دقیقه)
-      # =====================================================================
-      - name: Fast Build FFmpeg Only (Test Step)
+      - name: Build TeamTalk5 Core and DLL
         shell: cmd
         run: |
-          cmake --build output --config Release --target ffmpeg-src -- /v:minimal /fl "/flp:logfile=ffmpeg_build.log;verbosity=normal"
+          cmake --build output --config Release --target TeamTalk5DLL -- /v:minimal /fl "/flp:logfile=msbuild.log;verbosity=normal"
 
-      # در صورت خطای FFmpeg، بلافاصله لاگ داخلی آن را چاپ می‌کند
-      - name: Show FFmpeg config.log on Failure
+      - name: Extract and Print Exact Errors on Failure
         if: failure()
         shell: pwsh
         run: |
-          Write-Host "====================================================" -ForegroundColor Red
-          Write-Host "          FFMPEG CONFIG.LOG OUTPUT (LAST 120 LINES) " -ForegroundColor Red
-          Write-Host "====================================================" -ForegroundColor Red
+          Write-Host "========================================================" -ForegroundColor Red
+          Write-Host "        SCANNING FOR DETAILED BUILD ERRORS ...         " -ForegroundColor Red
+          Write-Host "========================================================" -ForegroundColor Red
 
-          $CONFIG_LOGS = Get-ChildItem -Path "output" -Filter "config.log" -Recurse
-          foreach ($log in $CONFIG_LOGS) {
-              Write-Host "`nLog File: $($log.FullName)" -ForegroundColor Yellow
-              Get-Content $log.FullName -Tail 120
+          if (Test-Path "output/msbuild.log") {
+              Write-Host "`n--- [Errors from MSBuild] ---" -ForegroundColor Yellow
+              Select-String -Path "output/msbuild.log" -Pattern "error", "fatal error", "FAILED" | Select-Object -Last 40 | ForEach-Object { Write-Host $_.Line }
           }
 
-          if (Test-Path "output/ffmpeg_build.log") {
-              Write-Host "`nMSBuild Log Errors:" -ForegroundColor Yellow
-              Select-String -Path "output/ffmpeg_build.log" -Pattern "error", "FAILED" | Select-Object -Last 30 | ForEach-Object { Write-Host $_.Line }
+          $logFiles = Get-ChildItem -Path "output" -Include "*.log", "*.err" -Recurse
+          foreach ($file in $logFiles) {
+              if ($file.Length -gt 0) {
+                  $content = Get-Content $file.FullName
+                  $hasError = $content | Select-String -Pattern "error:", "fatal error", "FAILED", "Error", "Stop." -SimpleMatch
+                  if ($hasError -or $file.Name -match "err|config") {
+                      Write-Host "`n========================================================" -ForegroundColor Cyan
+                      Write-Host "LOG FILE: $($file.FullName)" -ForegroundColor Cyan
+                      Write-Host "========================================================" -ForegroundColor Cyan
+                      Get-Content $file.FullName -Tail 80
+                  }
+              }
           }
-
-      # اگر FFmpeg با موفقیت بیلد شد، حالا کل DLL ساخته می‌شود
-      - name: Build Full TeamTalk5 Core and DLL
-        shell: cmd
-        run: |
-          cmake --build output --config Release --target TeamTalk5DLL -- /v:minimal
 
       - name: Collect and Package Artifacts
         if: success()
