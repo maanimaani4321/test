@@ -17,49 +17,44 @@ jobs:
         with:
           submodules: 'recursive'
 
-      - name: Verify Third Party Files Existence
-        shell: pwsh
-        run: |
-          Write-Host "====================================================" -ForegroundColor Cyan
-          Write-Host "         CHECKING THIRD_PARTY DIRECTORY             " -ForegroundColor Cyan
-          Write-Host "====================================================" -ForegroundColor Cyan
-          
-          $THIRDPARTY_PATH = "Library/TeamTalkLib/third_party"
-          if (-not (Test-Path $THIRDPARTY_PATH)) {
-              Write-Host "ERROR: Directory $THIRDPARTY_PATH does not exist in repository!" -ForegroundColor Red
-              exit 1
-          }
-
-          Get-ChildItem -Path $THIRDPARTY_PATH -Recurse | Select-Object FullName, Length | Format-Table -AutoSize
-
-          $REQUIRED_FILES = @(
-              "$THIRDPARTY_PATH/lib/x64/rubberband.lib",
-              "$THIRDPARTY_PATH/lib/x64/mysofa.lib",
-              "$THIRDPARTY_PATH/lib/x64/fftw3f.lib",
-              "$THIRDPARTY_PATH/include/rubberband/rubberband-c.h",
-              "$THIRDPARTY_PATH/include/mysofa.h",
-              "$THIRDPARTY_PATH/include/fftw3.h"
-          )
-
-          $MISSING = 0
-          foreach ($file in $REQUIRED_FILES) {
-              if (-not (Test-Path $file)) {
-                  Write-Host "MISSING FILE: $file (Check if git ignored it!)" -ForegroundColor Red
-                  $MISSING++
-              } else {
-                  Write-Host "FOUND: $file" -ForegroundColor Green
-              }
-          }
-
-          if ($MISSING -gt 0) {
-              Write-Host "`nERROR: Some third_party files are missing from git! Use 'git add -f' to force add them." -ForegroundColor Red
-              exit 1
-          }
-
       - name: Setup MSVC Developer Environment (x64)
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
+
+      - name: Rebuild Clean rubberband.lib (Fix LNK2005 Duplicate Symbols)
+        shell: pwsh
+        run: |
+          Write-Host "Rebuilding rubberband.lib cleanly to fix duplicate symbols..." -ForegroundColor Cyan
+          git clone --depth 1 https://github.com/breakfastquay/rubberband.git rb_src
+          
+          # ساخت CMakeLists تمیز فقط با RubberBandSingle.cpp
+          $rbCMake = @'
+          cmake_minimum_required(VERSION 3.15)
+          project(rubberband CXX C)
+          set(CMAKE_CXX_STANDARD 17)
+          set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
+          add_compile_options(/EHsc /W3)
+          add_library(rubberband STATIC single/RubberBandSingle.cpp)
+          target_compile_definitions(rubberband PRIVATE -DRUBBERBAND_USE_POCKETFFT -DNOMINMAX -D_USE_MATH_DEFINES -DNO_THREAD_CHECKS)
+          target_include_directories(rubberband PUBLIC . single src rubberband)
+          '@
+          $rbCMake | Set-Content -Path "rb_src/CMakeLists.txt"
+
+          cd rb_src
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DBUILD_SHARED_LIBS=OFF
+          cmake --build build --config Release
+
+          # جایگزینی rubberband.lib اصلاح شده در پوشه third_party
+          cd ..
+          Copy-Item "rb_src/build/rubberband.lib" -Destination "Library/TeamTalkLib/third_party/lib/x64/rubberband.lib" -Force
+          Write-Host "rubberband.lib successfully updated!" -ForegroundColor Green
+
+      - name: Verify Third Party Files
+        shell: pwsh
+        run: |
+          $THIRDPARTY_PATH = "Library/TeamTalkLib/third_party"
+          Get-ChildItem -Path $THIRDPARTY_PATH -Recurse | Select-Object FullName, Length | Format-Table -AutoSize
 
       - name: Install MSYS2
         uses: msys2/setup-msys2@v2
@@ -90,15 +85,11 @@ jobs:
             "-DTOOLCHAIN_INSTALL_PREFIX=$INSTALL_TOOLCHAIN" `
             "-DCMAKE_INSTALL_PREFIX=$INSTALL_TT"
 
-      # =====================================================================
-      # گام کلیدی: اول فقط FFmpeg را تست و بیلد می‌کنیم (زیر ۲ دقیقه)
-      # =====================================================================
       - name: Fast Build FFmpeg Only (Test Step)
         shell: cmd
         run: |
           cmake --build output --config Release --target ffmpeg-src -- /v:minimal /fl "/flp:logfile=ffmpeg_build.log;verbosity=normal"
 
-      # در صورت خطای FFmpeg، بلافاصله لاگ داخلی آن را چاپ می‌کند
       - name: Show FFmpeg config.log on Failure
         if: failure()
         shell: pwsh
@@ -113,12 +104,6 @@ jobs:
               Get-Content $log.FullName -Tail 120
           }
 
-          if (Test-Path "output/ffmpeg_build.log") {
-              Write-Host "`nMSBuild Log Errors:" -ForegroundColor Yellow
-              Select-String -Path "output/ffmpeg_build.log" -Pattern "error", "FAILED" | Select-Object -Last 30 | ForEach-Object { Write-Host $_.Line }
-          }
-
-      # اگر FFmpeg با موفقیت بیلد شد، حالا کل DLL ساخته می‌شود
       - name: Build Full TeamTalk5 Core and DLL
         shell: cmd
         run: |
