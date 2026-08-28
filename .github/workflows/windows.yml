@@ -40,23 +40,22 @@ jobs:
           echo %CD%\nasm-3.01>> %GITHUB_PATH%
 
       - name: Configure CMake
-        working-directory: ${{ github.workspace }}
+        shell: pwsh
         run: |
-          cmake -S . -B output -A x64 ^
-            -DFEATURE_WEBRTC=OFF ^
-            -DTOOLCHAIN_BUILD_EXTERNALPROJECTS=ON ^
-            -DTOOLCHAIN_INSTALL_PREFIX="${{ runner.workspace }}/install-toolchain" ^
-            -DCMAKE_INSTALL_PREFIX="${{ runner.workspace }}/install-teamtalk"
+          $INSTALL_TOOLCHAIN = "${{ runner.workspace }}/install-toolchain" -replace '\\', '/'
+          $INSTALL_TT = "${{ runner.workspace }}/install-teamtalk" -replace '\\', '/'
+
+          cmake -S . -B output -A x64 `
+            -DFEATURE_WEBRTC=OFF `
+            -DTOOLCHAIN_BUILD_EXTERNALPROJECTS=ON `
+            "-DTOOLCHAIN_INSTALL_PREFIX=$INSTALL_TOOLCHAIN" `
+            "-DCMAKE_INSTALL_PREFIX=$INSTALL_TT"
 
       - name: Build TeamTalk5 Core and DLL
-        working-directory: ${{ github.workspace }}
-        shell: cmd
+        shell: pwsh
         run: |
           cmake --build output --config Release --target TeamTalk5DLL -- /v:minimal /fl /flp:logfile=msbuild.log;verbosity=normal
 
-      # =========================================================================
-      # این بخش به محض بروز خطا اجرا می‌شود و متن دقیق خطای کامپایلر را چاپ می‌کند
-      # =========================================================================
       - name: Extract and Print Exact Errors on Failure
         if: failure()
         shell: pwsh
@@ -65,13 +64,11 @@ jobs:
           Write-Host "        SCANNING FOR DETAILED BUILD ERRORS ...         " -ForegroundColor Red
           Write-Host "========================================================" -ForegroundColor Red
 
-          # 1. بررسی لاگ کلی MSBuild
           if (Test-Path "output/msbuild.log") {
               Write-Host "`n--- [Errors from MSBuild] ---" -ForegroundColor Yellow
               Select-String -Path "output/msbuild.log" -Pattern "error", "fatal error", "FAILED" | Select-Object -Last 40 | ForEach-Object { Write-Host $_.Line }
           }
 
-          # 2. جستجو در تمام فایل‌های لاگ خروجی و خطای ExternalProjectها
           $logFiles = Get-ChildItem -Path "output" -Include "*.log", "*.err" -Recurse
           foreach ($file in $logFiles) {
               if ($file.Length -gt 0) {
