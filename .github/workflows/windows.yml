@@ -1,0 +1,93 @@
+name: Windows x64 DLL & Toolchain Builder
+
+on:
+  push:
+    branches: [ "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      - name: Setup MSVC Developer Environment (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MSYS
+          path-type: inherit
+          update: true
+          install: base-devel
+          release: false
+
+      - name: Install NASM
+        working-directory: ${{ runner.workspace }}
+        shell: cmd
+        run: |
+          curl -L -o nasm.zip https://www.nasm.us/pub/nasm/releasebuilds/3.01/win64/nasm-3.01-win64.zip
+          7z x nasm.zip
+          echo %CD%\nasm-3.01>> %GITHUB_PATH%
+
+      - name: Configure CMake
+        working-directory: ${{ github.workspace }}
+        run: >-
+          cmake -S . -B output -A x64
+          -DFEATURE_WEBRTC=OFF
+          -DTOOLCHAIN_BUILD_EXTERNALPROJECTS=ON
+          -DTOOLCHAIN_INSTALL_PREFIX="${{ runner.workspace }}/install-toolchain"
+          -DCMAKE_INSTALL_PREFIX="${{ runner.workspace }}/install-teamtalk"
+
+      - name: Build TeamTalk5 Core and DLL
+        working-directory: ${{ github.workspace }}
+        shell: cmd
+        run: |
+          cmake --build output --parallel --config Release --target TeamTalk5DLL
+
+      - name: Collect and Package Artifacts
+        shell: pwsh
+        run: |
+          # 1. آماده‌سازی باینری‌ها و هدرها
+          New-Item -ItemType Directory -Force -Path final_package/bin
+          New-Item -ItemType Directory -Force -Path final_package/include
+
+          Copy-Item "${{ github.workspace }}/Library/TeamTalk_DLL/TeamTalk5.dll" -Destination final_package/bin/ -Force
+          Copy-Item "${{ github.workspace }}/Library/TeamTalk_DLL/TeamTalk5.lib" -Destination final_package/bin/ -Force
+          Copy-Item "${{ github.workspace }}/Library/TeamTalk_DLL/TeamTalk.h" -Destination final_package/include/ -Force
+
+          # 2. فشرده‌سازی خروجی نهایی DLL و LIB
+          Compress-Archive -Path final_package/* -DestinationPath TeamTalk5-Windows-x64.zip -Force
+
+          # 3. فشرده‌سازی کامل پوشه وابستگی‌ها (Toolchain Install)
+          if (Test-Path "${{ runner.workspace }}/install-toolchain") {
+              Compress-Archive -Path "${{ runner.workspace }}/install-toolchain/*" -DestinationPath toolchain-windows-x64-install.zip -Force
+          }
+
+      - name: Upload Artifacts to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-win64
+          name: "TeamTalk5 Windows x64 DLL & Prebuilt Dependencies"
+          body: |
+            Automated build for Windows x64 (MSVC /MT):
+            - `TeamTalk5-Windows-x64.zip`: Contains `TeamTalk5.dll`, `TeamTalk5.lib`, and `TeamTalk.h`.
+            - `toolchain-windows-x64-install.zip`: Full compiled dependency tree (OpenSSL, FFmpeg, ACE, Speex, Opus, etc.).
+            
+            Last updated: ${{ github.event.head_commit.timestamp || 'Manual Run' }}
+          draft: false
+          prerelease: true
+          files: |
+            TeamTalk5-Windows-x64.zip
+            toolchain-windows-x64-install.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
