@@ -46,7 +46,7 @@ jobs:
           $INSTALL_TT = "${{ runner.workspace }}/install-teamtalk" -replace '\\', '/'
 
           cmake -S . -B output -A x64 `
-            -DFEATURE_WEBRTC=OFF `
+            -DFEATURE_WEBRTC=ON `
             -DTOOLCHAIN_BUILD_EXTERNALPROJECTS=ON `
             "-DTOOLCHAIN_INSTALL_PREFIX=$INSTALL_TOOLCHAIN" `
             "-DCMAKE_INSTALL_PREFIX=$INSTALL_TT"
