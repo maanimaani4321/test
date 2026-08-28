@@ -364,44 +364,29 @@ elseif (MSVC)
   set(PKG_CONFIG_TEMP_DIR "${CMAKE_CURRENT_BINARY_DIR}/pkgconfig")
   file(MAKE_DIRECTORY "${PKG_CONFIG_TEMP_DIR}")
 
-  file(WRITE "${PKG_CONFIG_TEMP_DIR}/pkg-config"
-"#!/bin/sh
-is_custom=0
-for arg in \"\$@\"; do
-    case \"\$arg\" in
-        *rubberband*|*mysofa*)
-            is_custom=1
-            ;;
-    esac
-done
+  file(WRITE "${PKG_CONFIG_TEMP_DIR}/rubberband.pc"
+"prefix=${TEAMTALKLIB_ROOT}/third_party
+includedir=\${prefix}/include
+libdir=\${prefix}/lib/x64
 
-if [ \"\$is_custom\" -eq 1 ]; then
-    for arg in \"\$@\"; do
-        case \"\$arg\" in
-            --exists)
-                exit 0
-                ;;
-            --modversion)
-                echo \"2.0.2\"
-                exit 0
-                ;;
-            --libs)
-                echo \"-L${THIRDPARTY_LIB_DIR} -lrubberband -lmysofa -lfftw3f\"
-                exit 0
-                ;;
-            --cflags)
-                echo \"-I${THIRDPARTY_INC_DIR}\"
-                exit 0
-                ;;
-        esac
-    done
-    exit 0
-fi
+Name: rubberband
+Description: Rubber Band Audio Time Stretcher Library
+Version: 3.3.0
+Cflags: -I\${includedir}
+Libs: -LIBPATH:\${libdir} rubberband.lib fftw3f.lib
+"
+  )
 
-if command -v /usr/bin/pkg-config >/dev/null 2>&1; then
-    exec /usr/bin/pkg-config \"\$@\"
-fi
-exit 1
+  file(WRITE "${PKG_CONFIG_TEMP_DIR}/libmysofa.pc"
+"prefix=${TEAMTALKLIB_ROOT}/third_party
+includedir=\${prefix}/include
+libdir=\${prefix}/lib/x64
+
+Name: libmysofa
+Description: SOFA file reader
+Version: 1.3.2
+Cflags: -I\${includedir}
+Libs: -LIBPATH:\${libdir} mysofa.lib
 "
   )
 
