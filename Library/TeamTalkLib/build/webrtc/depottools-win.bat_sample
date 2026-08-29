@@ -2,11 +2,11 @@ SET DEPOT_TOOLS_WIN_TOOLCHAIN=0
 SET PATH=@DEPOTTOOLS_DIR_NATIVE@;%PATH%
 CD @WEBRTC_FETCH_PATH_NATIVE@
 IF NOT "%ERRORLEVEL%" == "0" GOTO fail
-CALL fetch --nohooks --no-history webrtc
+CALL fetch --nohooks webrtc
+IF NOT "%ERRORLEVEL%" == "0" GOTO fail
+CALL gclient sync --with_branch_heads --no-history
 IF NOT "%ERRORLEVEL%" == "0" GOTO fail
 CD @WEBRTC_SOURCE_ROOT_NATIVE@
-IF NOT "%ERRORLEVEL%" == "0" GOTO fail
-CALL git fetch --depth=1 origin +refs/branch-heads/7778:refs/remotes/origin/branch-heads/7778
 IF NOT "%ERRORLEVEL%" == "0" GOTO fail
 CALL git checkout -f branch-heads/7778
 IF NOT "%ERRORLEVEL%" == "0" GOTO fail
