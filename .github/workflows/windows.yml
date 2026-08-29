@@ -167,7 +167,7 @@ jobs:
           call ninja -C out\Release teamtalk
           if errorlevel 1 exit /b 1
 
-      # مرحله دهم: کپی کردن کتابخانه و هدرهای WebRTC در پوشه Toolchain
+      # مرحله دهم: کپی کردن کتابخانه و هدرهای WebRTC در پوشه Toolchain (اصلاح‌شده برای رفع خطای robocopy)
       - name: 10. Copy WebRTC to Toolchain Directory
         shell: pwsh
         run: |
@@ -186,7 +186,10 @@ jobs:
 
           Write-Host "Copying WebRTC headers..." -ForegroundColor Cyan
           robocopy "C:\webrtc\src" "$incDir" *.h /S /NFL /NDL /NJH /NJS /nc /ns | Out-Null
+          if ($LASTEXITCODE -lt 8) { $global:LASTEXITCODE = 0 }
+
           robocopy "C:\webrtc\src" "$incDir" *.inc /S /NFL /NDL /NJH /NJS /nc /ns | Out-Null
+          if ($LASTEXITCODE -lt 8) { $global:LASTEXITCODE = 0 }
 
           Write-Host "WebRTC installation into toolchain verified successfully." -ForegroundColor Green
 
@@ -209,7 +212,7 @@ jobs:
         run: |
           cmake --build output --config Release --target TeamTalk5DLL -- /v:minimal /fl "/flp:logfile=msbuild.log;verbosity=normal"
 
-      # مرحله خطایابی در صورت بروز هرگونه مشکل
+      # مرحله خطایابی در صورت بروز هرگونه مشکل در کامپایل نهایی
       - name: Diagnostic Log Extraction on Failure
         if: failure()
         shell: pwsh
