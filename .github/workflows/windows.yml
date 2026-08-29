@@ -1,4 +1,4 @@
-name: Windows x64 DLL & Toolchain Builder
+name: Windows x64 DLL & Toolchain Builder (with WebRTC)
 
 on:
   push:
@@ -6,27 +6,99 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-webrtc:
+  build:
     runs-on: windows-latest
+    permissions:
+      contents: write
 
     steps:
-      - name: 1. Checkout Repository
-        uses: actions/checkout@v4
+      # مرحله اول: بررسی سیستم و منابع
+      - name: 1. System Info & Resource Check
+        shell: pwsh
+        run: |
+          Write-Host "================ SYSTEM SPECIFICATIONS ================" -ForegroundColor Cyan
+          Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors | Format-Table -AutoSize
+          $mem = Get-CimInstance Win32_OperatingSystem
+          $totalRam = [math]::Round($mem.TotalVisibleMemorySize / 1MB, 2)
+          $freeRam = [math]::Round($mem.FreePhysicalMemory / 1MB, 2)
+          Write-Host "RAM: Total: $totalRam GB | Free: $freeRam GB" -ForegroundColor Green
 
-      - name: 2. Setup MSVC Developer Environment (x64)
+          Write-Host "`n================ INITIAL DISK SPACE ================" -ForegroundColor Cyan
+          Get-PSDrive -PSProvider FileSystem | Select-Object Name, @{Name="Used(GB)";Expression={[math]::Round($_.Used/1GB,2)}}, @{Name="Free(GB)";Expression={[math]::Round($_.Free/1GB,2)}} | Format-Table -AutoSize
+
+      # مرحله دوم: پاک‌سازی ابزارهای اضافی برای آزادسازی دیسک
+      - name: 2. Free Up Disk Space
+        shell: pwsh
+        run: |
+          Write-Host "Cleaning up unnecessary large pre-installed packages..." -ForegroundColor Yellow
+          $targets = @(
+              "$env:ANDROID_HOME",
+              "$env:ANDROID_NDK_HOME",
+              "$env:JAVA_HOME_8_X64",
+              "$env:JAVA_HOME_11_X64",
+              "$env:JAVA_HOME_17_X64",
+              "$env:JAVA_HOME_21_X64",
+              "C:\Program Files\Android",
+              "C:\Program Files\Java",
+              "C:\hostedtoolcache\windows\Java",
+              "C:\hostedtoolcache\windows\Ruby",
+              "C:\hostedtoolcache\windows\Go",
+              "C:\ProgramData\DockerDesktop",
+              "C:\Program Files\Docker"
+          )
+
+          foreach ($path in $targets) {
+              if ($path -and (Test-Path $path)) {
+                  Remove-Item -Path $path -Recurse -Force -ErrorAction SilentlyContinue
+              }
+          }
+          Remove-Item -Path "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
+
+      # مرحله سوم: دریافت کد مخزن
+      - name: 3. Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      # مرحله چهارم: آماده‌سازی محیط MSVC
+      - name: 4. Setup MSVC Developer Environment (x64)
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
-      - name: 3. Setup depot_tools
+      # مرحله پنجم: دانلود و استخراج Toolchain از قبل بیلد شده (بدون WebRTC)
+      - name: 5. Download & Extract Prebuilt Toolchain
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $toolchainDir = "${{ runner.workspace }}/install-toolchain"
+          New-Item -ItemType Directory -Force -Path $toolchainDir | Out-Null
+
+          Write-Host "Downloading toolchain-windows-x64-install.zip from latest-win64 release..." -ForegroundColor Cyan
+          try {
+              gh release download latest-win64 --pattern "toolchain-windows-x64-install.zip" --dir "${{ runner.workspace }}" --clobber
+              Write-Host "Extracting prebuilt toolchain dependencies..." -ForegroundColor Green
+              Expand-Archive -Path "${{ runner.workspace }}/toolchain-windows-x64-install.zip" -DestinationPath $toolchainDir -Force
+              Write-Host "Extracted toolchain contents:" -ForegroundColor Gray
+              Get-ChildItem -Path $toolchainDir | Select-Object Name
+          } catch {
+              Write-Host "Warning: Could not download prebuilt toolchain zip. Toolchain directory will be initialized cleanly." -ForegroundColor Yellow
+          }
+
+      # مرحله ششم: راه‌اندازی depot_tools
+      - name: 6. Setup depot_tools for WebRTC
         shell: cmd
         run: |
-          mkdir C:\webrtc
+          if not exist C:\webrtc mkdir C:\webrtc
           cd /d C:\webrtc
-          git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+          if not exist C:\webrtc\depot_tools (
+              git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git
+          )
           echo C:\webrtc\depot_tools>> %GITHUB_PATH%
 
-      - name: 4. Fetch & Sync WebRTC (branch-heads/7778)
+      # مرحله هفتم: دانلود و هماهنگ‌سازی WebRTC
+      - name: 7. Fetch & Sync WebRTC (branch-heads/7778)
         shell: cmd
         run: |
           set DEPOT_TOOLS_WIN_TOOLCHAIN=0
@@ -56,26 +128,27 @@ jobs:
           call gclient sync --with_branch_heads -D -j4
           if errorlevel 1 exit /b 1
 
-      - name: 5. Apply TeamTalk Patch
+      # مرحله هشتم: اعمال پچ TeamTalk بر روی WebRTC
+      - name: 8. Apply TeamTalk Patch to WebRTC
         shell: cmd
         run: |
           cd /d C:\webrtc\src
           call git apply "%GITHUB_WORKSPACE%\Library\TeamTalkLib\build\webrtc\0001-Add-teamtalk-static-lib.patch"
           if errorlevel 1 (
-              echo Patch failed from relative path, trying fallback...
-              call git apply "%GITHUB_WORKSPACE%\webrtc\0001-Add-teamtalk-static-lib.patch"
+              echo Patch failed from primary path, trying fallback...
+              call git apply "%GITHUB_WORKSPACE%\build\webrtc\0001-Add-teamtalk-static-lib.patch"
           )
 
-      - name: 6. Compile WebRTC (teamtalk.lib) with GN & Ninja
+      # مرحله نهم: کامپایل دستی WebRTC (تولید teamtalk.lib)
+      - name: 9. Compile WebRTC (teamtalk.lib) with GN & Ninja
         shell: cmd
         run: |
           set DEPOT_TOOLS_WIN_TOOLCHAIN=0
           set PATH=C:\webrtc\depot_tools;%PATH%
           cd /d C:\webrtc\src
 
-          mkdir out\Release
+          if not exist out\Release mkdir out\Release
           
-          :: تولید فایل کانفیگ args.gn
           (
             echo is_debug=false
             echo target_cpu="x64"
@@ -94,9 +167,98 @@ jobs:
           call ninja -C out\Release teamtalk
           if errorlevel 1 exit /b 1
 
-      - name: 7. Verify Output Library
+      # مرحله دهم: کپی کردن کتابخانه و هدرهای WebRTC در پوشه Toolchain
+      - name: 10. Copy WebRTC to Toolchain Directory
         shell: pwsh
         run: |
-          Write-Host "Searching for compiled teamtalk.lib..." -ForegroundColor Green
-          $libs = Get-ChildItem -Path "C:\webrtc\src\out\Release" -Filter "*.lib" -Recurse
-          $libs | Format-Table FullName, Length -AutoSize
+          $webrtcInstallRoot = "${{ runner.workspace }}/install-toolchain/webrtc/x64"
+          $incDir = "$webrtcInstallRoot/include"
+          $libReleaseDir = "$webrtcInstallRoot/lib/release/obj/modules/audio_processing"
+          $libDebugDir = "$webrtcInstallRoot/lib/debug/obj/modules/audio_processing"
+
+          New-Item -ItemType Directory -Force -Path $incDir | Out-Null
+          New-Item -ItemType Directory -Force -Path $libReleaseDir | Out-Null
+          New-Item -ItemType Directory -Force -Path $libDebugDir | Out-Null
+
+          Write-Host "Copying teamtalk.lib..." -ForegroundColor Cyan
+          Copy-Item "C:\webrtc\src\out\Release\obj\modules\audio_processing\teamtalk.lib" -Destination "$libReleaseDir/teamtalk.lib" -Force
+          Copy-Item "C:\webrtc\src\out\Release\obj\modules\audio_processing\teamtalk.lib" -Destination "$libDebugDir/teamtalk.lib" -Force
+
+          Write-Host "Copying WebRTC headers..." -ForegroundColor Cyan
+          robocopy "C:\webrtc\src" "$incDir" *.h /S /NFL /NDL /NJH /NJS /nc /ns | Out-Null
+          robocopy "C:\webrtc\src" "$incDir" *.inc /S /NFL /NDL /NJH /NJS /nc /ns | Out-Null
+
+          Write-Host "WebRTC installation into toolchain verified successfully." -ForegroundColor Green
+
+      # مرحله یازدهم: پیکربندی CMake (بدون دانلود و بیلد وابستگی‌ها)
+      - name: 11. Configure CMake with Prebuilt Toolchain
+        shell: pwsh
+        run: |
+          $INSTALL_TOOLCHAIN = "${{ runner.workspace }}/install-toolchain" -replace '\\', '/'
+          $INSTALL_TT = "${{ runner.workspace }}/install-teamtalk" -replace '\\', '/'
+
+          cmake -S . -B output -A x64 `
+            -DFEATURE_WEBRTC=ON `
+            -DTOOLCHAIN_BUILD_EXTERNALPROJECTS=OFF `
+            "-DTOOLCHAIN_INSTALL_PREFIX=$INSTALL_TOOLCHAIN" `
+            "-DCMAKE_INSTALL_PREFIX=$INSTALL_TT"
+
+      # مرحله دوازدهم: بیلد TeamTalk5 DLL
+      - name: 12. Build TeamTalk5 DLL
+        shell: cmd
+        run: |
+          cmake --build output --config Release --target TeamTalk5DLL -- /v:minimal /fl "/flp:logfile=msbuild.log;verbosity=normal"
+
+      # مرحله خطایابی در صورت بروز هرگونه مشکل
+      - name: Diagnostic Log Extraction on Failure
+        if: failure()
+        shell: pwsh
+        run: |
+          Write-Host "========================================================" -ForegroundColor Red
+          Write-Host "        SCANNING FOR DETAILED BUILD ERRORS ...         " -ForegroundColor Red
+          Write-Host "========================================================" -ForegroundColor Red
+
+          if (Test-Path "output/msbuild.log") {
+              Write-Host "`n--- [Errors from MSBuild] ---" -ForegroundColor Yellow
+              Select-String -Path "output/msbuild.log" -Pattern "error", "fatal error", "FAILED" | Select-Object -Last 40 | ForEach-Object { Write-Host $_.Line }
+          }
+
+      # مرحله سیزدهم: بسته‌بندی فایل‌های خروجی
+      - name: 13. Collect & Package Artifacts
+        if: success()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path final_package/bin | Out-Null
+          New-Item -ItemType Directory -Force -Path final_package/include | Out-Null
+
+          Copy-Item "${{ github.workspace }}/Library/TeamTalk_DLL/TeamTalk5.dll" -Destination final_package/bin/ -Force
+          Copy-Item "${{ github.workspace }}/Library/TeamTalk_DLL/TeamTalk5.lib" -Destination final_package/bin/ -Force
+          Copy-Item "${{ github.workspace }}/Library/TeamTalk_DLL/TeamTalk.h" -Destination final_package/include/ -Force
+
+          Compress-Archive -Path final_package/* -DestinationPath TeamTalk5-Windows-x64.zip -Force
+
+          if (Test-Path "${{ runner.workspace }}/install-toolchain") {
+              Write-Host "Packaging complete toolchain (including WebRTC)..." -ForegroundColor Cyan
+              Compress-Archive -Path "${{ runner.workspace }}/install-toolchain/*" -DestinationPath toolchain-windows-x64-install.zip -Force
+          }
+
+      # مرحله چهاردهم: آپلود در Release گیت‌هاب
+      - name: 14. Upload Artifacts to GitHub Release
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-win64
+          name: "TeamTalk5 Windows x64 DLL & Prebuilt Dependencies (with WebRTC)"
+          body: |
+            Automated build for Windows x64 (MSVC /MT):
+            - `TeamTalk5-Windows-x64.zip`: Contains `TeamTalk5.dll`, `TeamTalk5.lib`, and `TeamTalk.h` (WebRTC Enabled).
+            - `toolchain-windows-x64-install.zip`: Full compiled dependency tree including WebRTC.
+            
+            Last updated: ${{ github.event.head_commit.timestamp || 'Manual Run' }}
+          draft: false
+          prerelease: true
+          files: |
+            TeamTalk5-Windows-x64.zip
+            toolchain-windows-x64-install.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
