@@ -9,13 +9,13 @@ IF NOT "%ERRORLEVEL%" == "0" GOTO fail
 CD @WEBRTC_SOURCE_ROOT_NATIVE@
 IF NOT "%ERRORLEVEL%" == "0" GOTO fail
 
-CALL git config --add remote.origin.fetch "+refs/branch-heads/*:refs/remotes/origin/*"
+CALL git config --add remote.origin.fetch "+refs/branch-heads/*:refs/remotes/branch-heads/*"
 IF NOT "%ERRORLEVEL%" == "0" GOTO fail
 
 CALL git fetch --depth=1 origin branch-heads/7778
 IF NOT "%ERRORLEVEL%" == "0" GOTO fail
 
-CALL git checkout branch-heads/7778
+CALL git checkout -f branch-heads/7778
 IF NOT "%ERRORLEVEL%" == "0" GOTO fail
 
 CD @WEBRTC_FETCH_PATH_NATIVE@
