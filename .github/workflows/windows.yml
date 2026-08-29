@@ -6,57 +6,173 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-webrtc-cmake:
+  build:
     runs-on: windows-latest
+    permissions:
+      contents: write
 
     steps:
-      - name: 1. Checkout Repository
+      # مرحله اول: بررسی اولیه سیستم و منابع
+      - name: 1. System Info & Resource Check (Initial)
+        shell: pwsh
+        run: |
+          Write-Host "================ SYSTEM SPECIFICATIONS ================" -ForegroundColor Cyan
+          Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors | Format-Table -AutoSize
+          $mem = Get-CimInstance Win32_OperatingSystem
+          $totalRam = [math]::Round($mem.TotalVisibleMemorySize / 1MB, 2)
+          $freeRam = [math]::Round($mem.FreePhysicalMemory / 1MB, 2)
+          Write-Host "RAM: Total: $totalRam GB | Free: $freeRam GB" -ForegroundColor Green
+
+          Write-Host "`n================ INITIAL DISK SPACE ================" -ForegroundColor Cyan
+          Get-PSDrive -PSProvider FileSystem | Select-Object Name, @{Name="Used(GB)";Expression={[math]::Round($_.Used/1GB,2)}}, @{Name="Free(GB)";Expression={[math]::Round($_.Free/1GB,2)}} | Format-Table -AutoSize
+
+      # مرحله دوم: پاک‌سازی ابزارهای اضافی بدون آسیب به MSVC و C++ Build
+      - name: 2. Free Up Disk Space
+        shell: pwsh
+        run: |
+          Write-Host "Cleaning up unnecessary large pre-installed packages..." -ForegroundColor Yellow
+          
+          # مسیر ابزارهای سنگین و بلااستفاده برای C++ Build
+          $targets = @(
+              "$env:ANDROID_HOME",
+              "$env:ANDROID_NDK_HOME",
+              "$env:JAVA_HOME_8_X64",
+              "$env:JAVA_HOME_11_X64",
+              "$env:JAVA_HOME_17_X64",
+              "$env:JAVA_HOME_21_X64",
+              "C:\Program Files\Android",
+              "C:\Program Files\Java",
+              "C:\hostedtoolcache\windows\Java",
+              "C:\hostedtoolcache\windows\Ruby",
+              "C:\hostedtoolcache\windows\Go",
+              "C:\ProgramData\DockerDesktop",
+              "C:\Program Files\Docker"
+          )
+
+          foreach ($path in $targets) {
+              if ($path -and (Test-Path $path)) {
+                  Write-Host "Deleting: $path" -ForegroundColor Gray
+                  Remove-Item -Path $path -Recurse -Force -ErrorAction SilentlyContinue
+              }
+          }
+
+          # خالی کردن فایل‌های موقت Temp
+          Write-Host "Clearing Temp folders..." -ForegroundColor Gray
+          Remove-Item -Path "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
+
+      # مرحله سوم: بررسی مجدد فضا پس از پاک‌سازی
+      - name: 3. Verify Disk Space (Post Clean-up)
+        shell: pwsh
+        run: |
+          Write-Host "================ DISK SPACE AFTER CLEANUP ================" -ForegroundColor Cyan
+          Get-PSDrive -PSProvider FileSystem | Select-Object Name, @{Name="Used(GB)";Expression={[math]::Round($_.Used/1GB,2)}}, @{Name="Free(GB)";Expression={[math]::Round($_.Free/1GB,2)}} | Format-Table -AutoSize
+
+      - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           submodules: 'recursive'
 
-      - name: 2. Setup MSVC Developer Environment (x64)
+      - name: Setup MSVC Developer Environment (x64)
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
-      - name: 3. Configure CMake (Exact Project Settings)
+      - name: Install MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MSYS
+          path-type: inherit
+          update: true
+          install: base-devel pkg-config
+          release: false
+
+      - name: Install NASM
+        working-directory: ${{ runner.workspace }}
+        shell: cmd
+        run: |
+          curl -L -o nasm.zip https://www.nasm.us/pub/nasm/releasebuilds/3.01/win64/nasm-3.01-win64.zip
+          7z x nasm.zip
+          echo %CD%\nasm-3.01>> %GITHUB_PATH%
+
+      - name: Configure CMake
         shell: pwsh
         run: |
           $INSTALL_TOOLCHAIN = "${{ runner.workspace }}/install-toolchain" -replace '\\', '/'
           $INSTALL_TT = "${{ runner.workspace }}/install-teamtalk" -replace '\\', '/'
 
-          # اجرای دقیق CMake پروژه
           cmake -S . -B output -A x64 `
             -DFEATURE_WEBRTC=ON `
             -DTOOLCHAIN_BUILD_EXTERNALPROJECTS=ON `
             "-DTOOLCHAIN_INSTALL_PREFIX=$INSTALL_TOOLCHAIN" `
             "-DCMAKE_INSTALL_PREFIX=$INSTALL_TT"
 
-      - name: 4. Build webrtc-src Target via CMake/MSBuild
+      - name: Build TeamTalk5 Core and DLL
         shell: cmd
         run: |
-          cmake --build output --config Release --target webrtc-src -- /v:normal /fl "/flp:logfile=msbuild-webrtc.log;verbosity=detailed"
+          cmake --build output --config Release --target TeamTalk5DLL -- /v:minimal /fl "/flp:logfile=msbuild.log;verbosity=normal"
 
-      - name: 5. Extract Exact Internal Error Log on Failure
+      # استپ اصلاح‌شده برای خطایابی دقیق‌تر در صورت بروز ارور
+      - name: Extract and Print Exact Errors on Failure
         if: failure()
         shell: pwsh
         run: |
-          Write-Host "====================================================" -ForegroundColor Red
-          Write-Host "         INTERNAL CMAKE STEP FAILURE LOGS           " -ForegroundColor Red
-          Write-Host "====================================================" -ForegroundColor Red
+          Write-Host "========================================================" -ForegroundColor Red
+          Write-Host "        SCANNING FOR DETAILED BUILD ERRORS ...         " -ForegroundColor Red
+          Write-Host "========================================================" -ForegroundColor Red
 
-          # چاپ تمام لاگ‌های داخلی مراحل webrtc (دانلود، پچ، کانفیگ، بیلد)
-          $stampLogs = Get-ChildItem -Path "output" -Recurse -Filter "webrtc-src-*.log" -ErrorAction SilentlyContinue
-          foreach ($log in $stampLogs) {
-              Write-Host "`n>>> LOG FILE: $($log.FullName)" -ForegroundColor Yellow
-              Get-Content $log.FullName | Select-Object -Last 100
+          if (Test-Path "output/msbuild.log") {
+              Write-Host "`n--- [Errors from MSBuild] ---" -ForegroundColor Yellow
+              Select-String -Path "output/msbuild.log" -Pattern "error", "fatal error", "FAILED" | Select-Object -Last 40 | ForEach-Object { Write-Host $_.Line }
           }
 
-          $stampErrs = Get-ChildItem -Path "output" -Recurse -Filter "webrtc-src-*.err" -ErrorAction SilentlyContinue
-          foreach ($err in $stampErrs) {
-              if ($err.Length -gt 0) {
-                  Write-Host "`n>>> ERROR FILE: $($err.FullName)" -ForegroundColor Red
-                  Get-Content $err.FullName
+          # رفع باگ: اضافه شدن -File و شرط بررسی فایل بودن برای جلوگیری از خطا روی فولدرهایی مثل re.err
+          $logFiles = Get-ChildItem -Path "output" -Include "*.log", "*.err" -Recurse -File -ErrorAction SilentlyContinue
+          foreach ($file in $logFiles) {
+              if (-not $file.PSIsContainer -and $file.Length -gt 0) {
+                  $content = Get-Content $file.FullName -ErrorAction SilentlyContinue
+                  $hasError = $content | Select-String -Pattern "error:", "fatal error", "FAILED", "Error", "Stop." -SimpleMatch
+                  if ($hasError -or $file.Name -match "err|config") {
+                      Write-Host "`n========================================================" -ForegroundColor Cyan
+                      Write-Host "LOG FILE: $($file.FullName)" -ForegroundColor Cyan
+                      Write-Host "========================================================" -ForegroundColor Cyan
+                      Get-Content $file.FullName -Tail 80
+                  }
               }
           }
+
+      - name: Collect and Package Artifacts
+        if: success()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path final_package/bin
+          New-Item -ItemType Directory -Force -Path final_package/include
+
+          Copy-Item "${{ github.workspace }}/Library/TeamTalk_DLL/TeamTalk5.dll" -Destination final_package/bin/ -Force
+          Copy-Item "${{ github.workspace }}/Library/TeamTalk_DLL/TeamTalk5.lib" -Destination final_package/bin/ -Force
+          Copy-Item "${{ github.workspace }}/Library/TeamTalk_DLL/TeamTalk.h" -Destination final_package/include/ -Force
+
+          Compress-Archive -Path final_package/* -DestinationPath TeamTalk5-Windows-x64.zip -Force
+
+          if (Test-Path "${{ runner.workspace }}/install-toolchain") {
+              Compress-Archive -Path "${{ runner.workspace }}/install-toolchain/*" -DestinationPath toolchain-windows-x64-install.zip -Force
+          }
+
+      - name: Upload Artifacts to GitHub Release
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-win64
+          name: "TeamTalk5 Windows x64 DLL & Prebuilt Dependencies"
+          body: |
+            Automated build for Windows x64 (MSVC /MT):
+            - `TeamTalk5-Windows-x64.zip`: Contains `TeamTalk5.dll`, `TeamTalk5.lib`, and `TeamTalk.h`.
+            - `toolchain-windows-x64-install.zip`: Full compiled dependency tree.
+            
+            Last updated: ${{ github.event.head_commit.timestamp || 'Manual Run' }}
+          draft: false
+          prerelease: true
+          files: |
+            TeamTalk5-Windows-x64.zip
+            toolchain-windows-x64-install.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
