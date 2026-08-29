@@ -1,0 +1,24 @@
+@ECHO OFF
+SET DEPOT_TOOLS_WIN_TOOLCHAIN=0
+SET PATH=@DEPOTTOOLS_DIR_NATIVE@;%PATH%
+CD /D "@WEBRTC_SOURCE_ROOT_NATIVE@"
+IF NOT "%ERRORLEVEL%" == "0" GOTO fail
+
+CALL gn gen "@WEBRTC_INSTALL_ROOT_NATIVE@\lib\debug"
+IF NOT "%ERRORLEVEL%" == "0" GOTO fail
+
+CALL gn gen "@WEBRTC_INSTALL_ROOT_NATIVE@\lib\release"
+IF NOT "%ERRORLEVEL%" == "0" GOTO fail
+
+CALL ninja @TOOLCHAIN_BUILD_MAKEJOBS@ -C "@WEBRTC_INSTALL_ROOT_NATIVE@\lib\debug" teamtalk
+IF NOT "%ERRORLEVEL%" == "0" GOTO fail
+
+CALL ninja @TOOLCHAIN_BUILD_MAKEJOBS@ -C "@WEBRTC_INSTALL_ROOT_NATIVE@\lib\release" teamtalk
+IF NOT "%ERRORLEVEL%" == "0" GOTO fail
+
+ECHO Finished building WebRTC teamtalk.lib
+EXIT /B 0
+
+:fail
+ECHO Failed during webrtc_build_win.bat
+EXIT /B 1

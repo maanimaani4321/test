@@ -1,4 +1,4 @@
-is_debug=false
+is_debug=true
 target_cpu="@WEBRTC_ARCH@"
 rtc_disable_logging=true
 rtc_enable_protobuf=false
